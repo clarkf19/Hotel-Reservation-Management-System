@@ -1,0 +1,76 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------
+   Design system — "Solstice": deep navy ink, warm brass accent,
+   sand paper background. Fraunces for display, Inter for interface.
+   ------------------------------------------------------------------ */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', ui-serif, Georgia, serif;
+
+  --color-ink-950: #0a0f1d;
+  --color-ink-900: #0f1629;
+  --color-ink-800: #18223b;
+  --color-ink-700: #243150;
+  --color-ink-600: #3a4769;
+  --color-ink-500: #5b6680;
+  --color-ink-400: #8a93a8;
+  --color-ink-300: #b7bdca;
+  --color-ink-200: #dde0e7;
+  --color-ink-100: #eceef2;
+  --color-ink-50: #f5f6f8;
+
+  --color-brass-700: #8a6628;
+  --color-brass-600: #a57c34;
+  --color-brass-500: #c29a52;
+  --color-brass-400: #d4b06a;
+  --color-brass-300: #e4cb97;
+  --color-brass-100: #f6eedd;
+  --color-brass-50: #fbf7ef;
+
+  --color-sand: #f7f5f0;
+  --color-paper: #fdfcf9;
+
+  /* chart palette (dataviz reference palette, fixed order) */
+  --color-series-1: #2a78d6;
+  --color-series-2: #eb6834;
+  --color-series-3: #1baf7a;
+
+  --shadow-soft: 0 1px 2px rgb(15 22 41 / 0.04), 0 4px 16px rgb(15 22 41 / 0.06);
+  --shadow-lift: 0 2px 4px rgb(15 22 41 / 0.06), 0 12px 32px rgb(15 22 41 / 0.12);
+  --radius-xl: 14px;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--color-sand);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+.font-display { font-family: var(--font-display); font-optical-sizing: auto; letter-spacing: -0.01em; }
+
+:focus-visible { outline: 2px solid var(--color-brass-500); outline-offset: 2px; border-radius: 6px; }
+
+/* numeric tables align */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* subtle scrollbar */
+* { scrollbar-width: thin; scrollbar-color: var(--color-ink-300) transparent; }
+
+/* skeleton shimmer */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton { position: relative; overflow: hidden; background: var(--color-ink-100); border-radius: 8px; }
+.skeleton::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.6), transparent); animation: shimmer 1.4s infinite; }
+
+/* hero grain */
+.grain { background-image: radial-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px); background-size: 3px 3px; }
+
+@keyframes pulse-ring { 0% { transform: scale(0.8); opacity: 0.7; } 100% { transform: scale(2.2); opacity: 0; } }
+.pulse-ring::before { content: ''; position: absolute; inset: 0; border-radius: 9999px; border: 2px solid currentColor; animation: pulse-ring 1.8s ease-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
