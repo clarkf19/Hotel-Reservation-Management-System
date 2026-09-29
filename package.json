@@ -1,0 +1,16 @@
+{
+  "name": "hotel-reservation-management-system",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hotel Reservation Management System (Release 1.0) — Software Engineering project, Sardar Patel Institute of Technology",
+  "scripts": {
+    "setup": "npm install --prefix database && npm install --prefix server && npm install --prefix client && node scripts/setup-env.js",
+    "db": "npm --prefix database start",
+    "db:setup": "npm --prefix server run db:deploy && npm --prefix server run db:seed",
+    "db:seed": "npm --prefix server run db:seed",
+    "api": "npm --prefix server run dev",
+    "web": "npm --prefix client run dev",
+    "test": "npm --prefix server test",
+    "build": "npm --prefix client run build"
+  }
+}

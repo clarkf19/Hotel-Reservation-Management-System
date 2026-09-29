@@ -253,6 +253,8 @@ async function main() {
         reconciled: status === 'CHECKED_OUT' && p.checkOut < addDays(today, -7),
       },
     });
+    await prisma.auditLog.create({ data: { action: 'PAYMENT_CAPTURED', entityType: 'Payment', entityId: String(res.id), performedBy: p.channel ? null : p.guest.userId, timestamp: createdAt, details: { reservationId: res.id, amount: total, method, transactionRef } } });
+    if (refunded) await prisma.auditLog.create({ data: { action: 'PAYMENT_REFUNDED', entityType: 'Payment', entityId: String(res.id), performedBy: p.guest.userId, timestamp: cancelledAt, details: { reservationId: res.id, amount: refunded } } });
     if (!p.channel) {
       ledger[transactionRef] = { transactionId: transactionRef, amount: total, currency: 'INR', method, reference: `RES-${res.id}`, state: refunded ? (refunded >= total ? 'REFUNDED' : 'PARTIALLY_REFUNDED') : 'CAPTURED', refunded: refunded || undefined, createdAt: createdAt.toISOString(), capturedAt: createdAt.toISOString() };
     }

@@ -63,11 +63,11 @@ describe('4. Double booking prevention (BR-3 / Reservation.Prevent.DoubleBooking
   it('concurrent requests for the same room: exactly one wins (database exclusion constraint)', async () => {
     const a = await login('guest@hrms.test');
     const b = await login('meera@hrms.test');
-    const room = await freeRoom(day(60), day(62));
+    const room = await freeRoom(day(60), day(63));
     const results = await Promise.all([
       api().post('/api/reservations').set(a.auth).send({ roomId: room.id, checkIn: day(60), checkOut: day(62), numGuests: 1 }),
       api().post('/api/reservations').set(b.auth).send({ roomId: room.id, checkIn: day(61), checkOut: day(63), numGuests: 1 }),
-      api().post('/api/reservations').set(a.auth).send({ roomId: room.id, checkIn: day(60), checkOut: day(61), numGuests: 1 }),
+      api().post('/api/reservations').set(a.auth).send({ roomId: room.id, checkIn: day(60), checkOut: day(63), numGuests: 1 }), // every pair overlaps
     ]);
     expect(results.filter((r) => r.status === 201)).toHaveLength(1);
     expect(results.filter((r) => r.status === 409)).toHaveLength(2);

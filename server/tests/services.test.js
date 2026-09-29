@@ -130,6 +130,13 @@ describe('Analytics, reports and finance (SRS 4.7, UC-3)', () => {
   });
 
   it('every booking and payment transaction is audited (SE-6)', async () => {
+    const { book, freeRoom } = await import('./helpers.js');
+    const guest = await login('meera@hrms.test');
+    const room = await freeRoom(day(120), day(121));
+    const { paid } = await book(guest, { roomId: room.id, checkIn: day(120), checkOut: day(121), numGuests: 1 });
+    const paymentId = paid.body.payment.id;
+    expect(await prisma.auditLog.count({ where: { action: 'PAYMENT_CAPTURED', entityType: 'Payment', entityId: String(paymentId) } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'RESERVATION_CONFIRMED', entityId: String(paid.body.reservation.id) } })).toBe(1);
     const admin = await login('admin@hrms.test');
     const res = await api().get('/api/admin/audit-logs?action=PAYMENT').set(admin.auth);
     expect(res.body.logs.length).toBeGreaterThan(0);
