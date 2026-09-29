@@ -1,0 +1,18 @@
+# Optional alternative to `npm start` in this folder.
+# Runs the same PostgreSQL database inside Docker, on the same port and credentials.
+#   docker compose -f database/docker-compose.yml up -d
+services:
+  postgres:
+    image: postgres:18
+    container_name: hrms-postgres
+    environment:
+      POSTGRES_USER: hrms
+      POSTGRES_PASSWORD: hrms_local_dev
+      POSTGRES_DB: hrms
+    ports:
+      - "5433:5432"
+    volumes:
+      - hrms_pgdata:/var/lib/postgresql
+      - ./init:/docker-entrypoint-initdb.d
+volumes:
+  hrms_pgdata:

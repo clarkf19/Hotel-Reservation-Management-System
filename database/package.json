@@ -1,0 +1,14 @@
+{
+  "name": "hrms-database",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local PostgreSQL server for the Hotel Reservation Management System (no system install required)",
+  "type": "module",
+  "scripts": {
+    "start": "node start-postgres.js",
+    "reset": "node start-postgres.js --reset"
+  },
+  "dependencies": {
+    "embedded-postgres": "18.4.0-beta.17"
+  }
+}

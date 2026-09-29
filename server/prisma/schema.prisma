@@ -1,0 +1,735 @@
+// =============================================================================
+// Hotel Reservation Management System - relational schema (PostgreSQL)
+//
+// Each model is annotated with the UML class (Exp 3 class diagram), the SRS
+// data-dictionary element (SRS Appendix A) and the DFD data store (Exp 6,
+// Level 1) it implements. See docs/DATABASE.md for the full mapping.
+//
+// Constraints that Prisma cannot express (the double-booking exclusion
+// constraint, CHECK constraints, the reservation-number sequence) are added
+// in prisma/migrations/*_domain_constraints/migration.sql.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enumerations
+// ---------------------------------------------------------------------------
+
+/// SRS data dictionary: reservation status = [draft | pending payment | confirmed | checked-in | checked-out | cancelled]
+enum ReservationStatus {
+  DRAFT
+  PENDING_PAYMENT
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+}
+
+/// SRS data dictionary: payment status = [initiated | processing | verified | failed | captured | refunded]
+enum PaymentStatus {
+  INITIATED
+  PROCESSING
+  VERIFIED
+  FAILED
+  CAPTURED
+  REFUNDED
+}
+
+enum PaymentPurpose {
+  RESERVATION
+  INCIDENTAL
+  FINAL_SETTLEMENT
+  CANCELLATION_FEE
+}
+
+/// DFD Level 2 (3.1): Card / UPI / Net Banking / Wallet
+enum PaymentMethod {
+  CARD
+  UPI
+  NET_BANKING
+  WALLET
+}
+
+/// SRS data dictionary: room category = [standard | deluxe | suite | accessible]
+enum RoomCategory {
+  STANDARD
+  DELUXE
+  SUITE
+  ACCESSIBLE
+}
+
+enum RoomStatus {
+  AVAILABLE
+  RESERVED
+  OCCUPIED
+  CLEANING
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum BookingSource {
+  DIRECT
+  RECEPTIONIST
+  AI_CONCIERGE
+  OTA
+}
+
+enum DigitalKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum KeyType {
+  QR
+  NFC
+}
+
+enum AccessResult {
+  GRANTED
+  DENIED
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  VOID
+}
+
+enum ChannelStatus {
+  CONNECTED
+  DISABLED
+  ERROR
+}
+
+enum SyncType {
+  PULL_BOOKINGS
+  PUSH_AVAILABILITY
+  PUSH_RATES
+  STATUS_UPDATE
+}
+
+enum SyncStatus {
+  SUCCESS
+  FAILED
+  CONFLICT
+  RESOLVED
+}
+
+enum ServiceRequestStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+enum LoyaltyTransactionType {
+  ACCRUAL
+  REDEMPTION
+  ADJUSTMENT
+}
+
+enum AIResponseSource {
+  LLM
+  KNOWLEDGE_BASE
+  ESCALATED
+}
+
+// ---------------------------------------------------------------------------
+// 1.0 User Authentication & Profile Management  (DFD store D1 User Data)
+// ---------------------------------------------------------------------------
+
+/// UML: Role — "User 0..* assigned to 1 Role"
+model Role {
+  id          Int              @id @default(autoincrement())
+  roleName    String           @unique
+  description String
+  users       User[]
+  permissions RolePermission[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("roles")
+}
+
+/// UML: Permission — "Role 1 grants 0..* Permission"
+model Permission {
+  id             Int              @id @default(autoincrement())
+  permissionName String           @unique
+  description    String
+  roles          RolePermission[]
+
+  @@map("permissions")
+}
+
+/// IMPLEMENTATION ASSUMPTION: join table so one permission can be granted to several roles.
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+/// UML: User (abstract). Specialisations Guest / Receptionist / HotelManager /
+/// FinanceStaff / SystemAdministrator are identified by roleId; subclass-specific
+/// identifiers live in Guest (guestId) and StaffMember (employeeId / adminId).
+model User {
+  id                  Int       @id @default(autoincrement())
+  name                String
+  email               String    @unique
+  phone               String?
+  passwordHash        String
+  isActive            Boolean   @default(true)
+  mfaEnabled          Boolean   @default(false)
+  roleId              Int
+  role                Role      @relation(fields: [roleId], references: [id])
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  guest               Guest?
+  staff               StaffMember?
+  sessions            UserSession[]
+  resetTokens         PasswordResetToken[]
+  auditLogs           AuditLog[]           @relation("AuditPerformedBy")
+  notifications       Notification[]
+  reports             Report[]
+  resolvedSyncs       ChannelSync[]        @relation("SyncResolvedBy")
+  verifiedPayments    Payment[]            @relation("PaymentVerifiedBy")
+  assignedRequests    ServiceRequest[]     @relation("ServiceAssignee")
+  createdReservations Reservation[]        @relation("ReservationCreatedBy")
+
+  @@index([roleId])
+  @@map("users")
+}
+
+/// UML: Guest extends User (attribute guestId).
+/// SRS data dictionary: guest ID = 8-character alphanumeric string.
+model Guest {
+  id              Int              @id @default(autoincrement())
+  guestId         String           @unique @db.Char(8)
+  userId          Int              @unique
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile         GuestProfile?
+  loyaltyAccount  LoyaltyAccount?
+  reservations    Reservation[]
+  conversations   AIConversation[]
+  serviceRequests ServiceRequest[]
+  createdAt       DateTime         @default(now())
+
+  @@map("guests")
+}
+
+/// UML: Receptionist / HotelManager / FinanceStaff (employeeId) and SystemAdministrator (adminId).
+model StaffMember {
+  id         Int      @id @default(autoincrement())
+  employeeId String   @unique
+  userId     Int      @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department String
+  createdAt  DateTime @default(now())
+
+  @@map("staff_members")
+}
+
+/// UML: GuestProfile — "Guest 1 has 0..1 GuestProfile"
+model GuestProfile {
+  id                 Int       @id @default(autoincrement())
+  guestId            Int       @unique
+  guest              Guest     @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  dateOfBirth        DateTime? @db.Date
+  nationality        String?
+  address            String?
+  /// Room preferences used by smart allocation (Reservation.Allocate.Smart)
+  preferences        Json      @default("{}")
+  accessibilityNeeds String?
+  preferredCurrency  String    @default("INR") @db.Char(3)
+  updatedAt          DateTime  @updatedAt
+
+  @@map("guest_profiles")
+}
+
+/// UML: LoyaltyAccount — "Guest 1 has 0..1 LoyaltyAccount"
+/// SRS data dictionary: loyalty account = loyalty ID + guest + points balance
+model LoyaltyAccount {
+  id             Int                  @id @default(autoincrement())
+  guestId        Int                  @unique
+  guest          Guest                @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  pointsBalance  Int                  @default(0)
+  lifetimePoints Int                  @default(0)
+  tier           String               @default("SILVER")
+  transactions   LoyaltyTransaction[]
+  updatedAt      DateTime             @updatedAt
+
+  @@map("loyalty_accounts")
+}
+
+/// SRS Figure 4 (partial data model): Loyalty Transaction entity
+model LoyaltyTransaction {
+  id               Int                    @id @default(autoincrement())
+  loyaltyAccountId Int
+  loyaltyAccount   LoyaltyAccount         @relation(fields: [loyaltyAccountId], references: [id], onDelete: Cascade)
+  reservationId    Int?
+  reservation      Reservation?           @relation(fields: [reservationId], references: [id])
+  type             LoyaltyTransactionType
+  points           Int
+  description      String
+  createdAt        DateTime               @default(now())
+
+  @@index([loyaltyAccountId])
+  @@map("loyalty_transactions")
+}
+
+/// Session record behind each JWT: enforces User.Logout and User.Session.Timeout (20 min idle).
+model UserSession {
+  id             String    @id @default(uuid())
+  userId         Int
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  revokedAt      DateTime?
+  userAgent      String?
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+/// User.Password.Reset — e-mail link valid for 30 minutes
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("password_reset_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// 2.0 Room Search & Reservation Management  (D2 Room Inventory, D3 Reservation Data)
+// ---------------------------------------------------------------------------
+
+/// UML: RoomType — "RoomType contain 0..* Room"
+model RoomType {
+  id           Int          @id @default(autoincrement())
+  typeName     String       @unique
+  category     RoomCategory
+  description  String
+  baseRate     Decimal      @db.Decimal(10, 2)
+  maxOccupancy Int
+  sizeSqm      Int?
+  bedType      String?
+  amenities    String[]
+  imageUrl     String?
+  rooms        Room[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@map("room_types")
+}
+
+/// UML: Room. SRS data dictionary: room = room number + category + occupancy limit + accessible + status + price
+model Room {
+  id           Int             @id @default(autoincrement())
+  roomNumber   String          @unique
+  roomTypeId   Int
+  roomType     RoomType        @relation(fields: [roomTypeId], references: [id])
+  floor        Int
+  capacity     Int
+  status       RoomStatus      @default(AVAILABLE)
+  baseRate     Decimal         @db.Decimal(10, 2)
+  accessible   Boolean         @default(false)
+  view         String?
+  features     String[]
+  reservations Reservation[]
+  accessLogs   RoomAccessLog[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([roomTypeId])
+  @@map("rooms")
+}
+
+/// UML: Reservation. SRS data dictionary: reservation = reservation number + guest + room +
+/// check-in date + check-out date + reservation status + 0:1{digital key} + 0:1{invoice}
+model Reservation {
+  id                 Int                  @id @default(autoincrement())
+  /// Sequential integer assigned on confirmation (data dictionary). NULL until confirmed.
+  reservationNumber  Int?                 @unique
+  guestId            Int
+  guest              Guest                @relation(fields: [guestId], references: [id])
+  roomId             Int
+  room               Room                 @relation(fields: [roomId], references: [id])
+  checkInDate        DateTime             @db.Date
+  checkOutDate       DateTime             @db.Date
+  numGuests          Int
+  status             ReservationStatus    @default(DRAFT)
+  totalAmount        Decimal              @db.Decimal(10, 2)
+  discountAmount     Decimal              @default(0) @db.Decimal(10, 2)
+  pointsRedeemed     Int                  @default(0)
+  currency           String               @default("INR") @db.Char(3)
+  source             BookingSource        @default(DIRECT)
+  specialRequests    String?
+  /// Temporary inventory lock (Activity: "Lock Room Inventory"; DFD 2.2 "Temporary Hold")
+  holdExpiresAt      DateTime?
+  otaChannelId       Int?
+  otaChannel         OTAChannel?          @relation(fields: [otaChannelId], references: [id])
+  externalRef        String?
+  confirmedAt        DateTime?
+  identityVerifiedAt DateTime?
+  identityDocument   String?
+  checkedInAt        DateTime?
+  checkedOutAt       DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  cancellationFee    Decimal              @default(0) @db.Decimal(10, 2)
+  createdById        Int?
+  createdBy          User?                @relation("ReservationCreatedBy", fields: [createdById], references: [id])
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  payments           Payment[]
+  invoice            Invoice?
+  digitalKey         DigitalKey?
+  channelSyncs       ChannelSync[]        @relation("SyncReservation")
+  conflictSyncs      ChannelSync[]        @relation("SyncConflictReservation")
+  serviceRequests    ServiceRequest[]
+  loyaltyEntries     LoyaltyTransaction[]
+  accessLogs         RoomAccessLog[]
+
+  @@unique([otaChannelId, externalRef])
+  @@index([roomId, checkInDate, checkOutDate])
+  @@index([guestId])
+  @@index([status])
+  @@map("reservations")
+}
+
+// ---------------------------------------------------------------------------
+// 3.0 Payment Processing  (D4 Payment Records)
+// ---------------------------------------------------------------------------
+
+/// UML: Payment — "Reservation 1 has 0..* Payment"; uses PaymentGateway and CurrencyExchangeRateService.
+/// No raw card data is ever stored (SI-1.1, SE-4): only brand + last 4 digits returned by the gateway.
+model Payment {
+  id               Int            @id @default(autoincrement())
+  reservationId    Int
+  reservation      Reservation    @relation(fields: [reservationId], references: [id])
+  amount           Decimal        @db.Decimal(10, 2)
+  /// ISO 4217 code of the hotel's base currency (BR-4)
+  currency         String         @default("INR") @db.Char(3)
+  originalAmount   Decimal?       @db.Decimal(12, 2)
+  originalCurrency String?        @db.Char(3)
+  exchangeRate     Decimal?       @db.Decimal(14, 6)
+  paymentMethod    PaymentMethod
+  purpose          PaymentPurpose @default(RESERVATION)
+  status           PaymentStatus  @default(INITIATED)
+  paidAt           DateTime?
+  transactionRef   String?        @unique
+  methodSummary    String?
+  failureReason    String?
+  refundedAmount   Decimal        @default(0) @db.Decimal(10, 2)
+  reconciled       Boolean        @default(false)
+  verifiedById     Int?
+  verifiedBy       User?          @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([reservationId])
+  @@index([status])
+  @@map("payments")
+}
+
+/// UML: Invoice — "Reservation 1 has 0..1 Invoice". Itemised lines kept as JSON (Invoice.Generate).
+model Invoice {
+  id            Int           @id @default(autoincrement())
+  reservationId Int           @unique
+  reservation   Reservation   @relation(fields: [reservationId], references: [id])
+  invoiceNumber String        @unique
+  issueDate     DateTime      @default(now())
+  subtotal      Decimal       @db.Decimal(10, 2)
+  taxAmount     Decimal       @db.Decimal(10, 2)
+  totalAmount   Decimal       @db.Decimal(10, 2)
+  amountPaid    Decimal       @db.Decimal(10, 2)
+  currency      String        @default("INR") @db.Char(3)
+  lineItems     Json
+  status        InvoiceStatus @default(ISSUED)
+  emailedAt     DateTime?
+
+  @@map("invoices")
+}
+
+/// Cached rates from CurrencyExchangeRateService (SI-5.1: refreshed at least every 24 h)
+model ExchangeRate {
+  currency  String   @id @db.Char(3)
+  rate      Decimal  @db.Decimal(14, 6)
+  fetchedAt DateTime
+
+  @@map("exchange_rates")
+}
+
+// ---------------------------------------------------------------------------
+// 4.0 Check-in / Check-out & Access Management  (D5 Room Access Logs)
+// ---------------------------------------------------------------------------
+
+/// UML: DigitalKey — "Reservation 1 issues 0..1 DigitalKey"; uses SmartLockController.
+/// SRS data dictionary: digital key = key ID + token + valid from + valid to + reservation
+model DigitalKey {
+  id            Int              @id @default(autoincrement())
+  reservationId Int              @unique
+  reservation   Reservation      @relation(fields: [reservationId], references: [id])
+  keyCode       String           @unique
+  keyType       KeyType          @default(QR)
+  issueDate     DateTime
+  expiryDate    DateTime
+  status        DigitalKeyStatus @default(ACTIVE)
+  revokedAt     DateTime?
+  accessLogs    RoomAccessLog[]
+
+  @@map("digital_keys")
+}
+
+/// DFD Level 1 data store D5 "Room Access Logs"
+model RoomAccessLog {
+  id            Int          @id @default(autoincrement())
+  roomId        Int
+  room          Room         @relation(fields: [roomId], references: [id])
+  digitalKeyId  Int?
+  digitalKey    DigitalKey?  @relation(fields: [digitalKeyId], references: [id])
+  reservationId Int?
+  reservation   Reservation? @relation(fields: [reservationId], references: [id])
+  result        AccessResult
+  reason        String
+  attemptedAt   DateTime     @default(now())
+
+  @@index([roomId, attemptedAt])
+  @@map("room_access_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Multi-Channel Booking Synchronization (SRS 4.3)
+// ---------------------------------------------------------------------------
+
+/// UML: OTAChannel — "OTAChannel 1 has 0..* ChannelSync"
+model OTAChannel {
+  id                Int           @id @default(autoincrement())
+  channelName       String        @unique
+  code              String        @unique
+  apiEndpoint       String
+  status            ChannelStatus @default(CONNECTED)
+  commissionPercent Decimal       @default(15) @db.Decimal(5, 2)
+  lastSyncAt        DateTime?
+  syncs             ChannelSync[]
+  reservations      Reservation[]
+  platformBookings  MockOtaBooking[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@map("ota_channels")
+}
+
+/// UML: ChannelSync — one synchronisation record; conflicts are ChannelSync rows with
+/// syncStatus = CONFLICT that a Receptionist resolves (Channel.Sync.Conflict).
+model ChannelSync {
+  id                       Int          @id @default(autoincrement())
+  channelId                Int
+  channel                  OTAChannel   @relation(fields: [channelId], references: [id])
+  reservationId            Int?
+  reservation              Reservation? @relation("SyncReservation", fields: [reservationId], references: [id])
+  syncType                 SyncType
+  syncStatus               SyncStatus
+  lastSyncAt               DateTime     @default(now())
+  errorMessage             String?
+  details                  Json         @default("{}")
+  externalRef              String?
+  conflictType             String?
+  conflictReservationId    Int?
+  conflictReservation      Reservation? @relation("SyncConflictReservation", fields: [conflictReservationId], references: [id])
+  resolution               String?
+  resolutionNote           String?
+  resolvedById             Int?
+  resolvedBy               User?        @relation("SyncResolvedBy", fields: [resolvedById], references: [id])
+  resolvedAt               DateTime?
+
+  @@index([channelId, lastSyncAt])
+  @@index([syncStatus])
+  @@map("channel_syncs")
+}
+
+/// SIMULATED EXTERNAL SYSTEM: the booking store *inside* the mock OTA platforms
+/// (OTA Platform A/B/C). The HRMS never reads this table directly - only through the
+/// OTAPlatform interface (integrations/ota/MockOTAPlatform.js).
+model MockOtaBooking {
+  id             Int        @id @default(autoincrement())
+  channelId      Int
+  channel        OTAChannel @relation(fields: [channelId], references: [id])
+  externalRef    String
+  roomNumber     String
+  guestName      String
+  guestEmail     String
+  checkInDate    DateTime   @db.Date
+  checkOutDate   DateTime   @db.Date
+  numGuests      Int        @default(1)
+  amount         Decimal    @db.Decimal(10, 2)
+  status         String
+  hrmsStatus     String?
+  /// true when the booking changed on the OTA side and HRMS has not processed it yet
+  pendingSync    Boolean    @default(true)
+  pulledAt       DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([channelId, externalRef])
+  @@map("mock_ota_bookings")
+}
+
+// ---------------------------------------------------------------------------
+// 5.0 Guest Services (Concierge)  (D6 Service Requests)
+// ---------------------------------------------------------------------------
+
+/// UML: AIConversation — "Guest 1 has 0..* AIConversation"; uses AIConciergeService.
+model AIConversation {
+  id              Int              @id @default(autoincrement())
+  guestId         Int
+  guest           Guest            @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  sessionId       String
+  query           String
+  response        String
+  intent          String?
+  source          AIResponseSource
+  resolved        Boolean          @default(true)
+  timestamp       DateTime         @default(now())
+  serviceRequests ServiceRequest[]
+
+  @@index([guestId, sessionId])
+  @@map("ai_conversations")
+}
+
+/// Knowledge base behind AI.FAQ.Answer ("maintained knowledge base")
+model FaqEntry {
+  id        Int      @id @default(autoincrement())
+  category  String
+  question  String
+  answer    String
+  keywords  String[]
+  updatedAt DateTime @updatedAt
+
+  @@map("faq_entries")
+}
+
+/// DFD Level 1 data store D6 "Service Requests" (Activity: "Submit Service Request",
+/// "Handle Escalated Guest Request")
+model ServiceRequest {
+  id               Int                  @id @default(autoincrement())
+  guestId          Int
+  guest            Guest                @relation(fields: [guestId], references: [id])
+  reservationId    Int?
+  reservation      Reservation?         @relation(fields: [reservationId], references: [id])
+  conversationId   Int?
+  conversation     AIConversation?      @relation(fields: [conversationId], references: [id])
+  category         String
+  description      String
+  status           ServiceRequestStatus @default(OPEN)
+  isEscalation     Boolean              @default(false)
+  charge           Decimal              @default(0) @db.Decimal(10, 2)
+  assignedToId     Int?
+  assignedTo       User?                @relation("ServiceAssignee", fields: [assignedToId], references: [id])
+  staffNote        String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  completedAt      DateTime?
+
+  @@index([status])
+  @@map("service_requests")
+}
+
+// ---------------------------------------------------------------------------
+// 6.0 Reporting & Administration  (D7 Reports & Analytics)
+// ---------------------------------------------------------------------------
+
+/// UML: Report
+model Report {
+  id            Int      @id @default(autoincrement())
+  reportType    String
+  generatedById Int
+  generatedBy   User     @relation(fields: [generatedById], references: [id])
+  generatedAt   DateTime @default(now())
+  parameters    Json
+  data          Json
+  filePath      String?
+
+  @@index([reportType])
+  @@map("reports")
+}
+
+/// UML: AuditLog — "User 1 creates 0..* AuditLog" (SE-6, UC-4 step 4)
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  timestamp   DateTime @default(now())
+  action      String
+  entityType  String
+  entityId    String?
+  performedBy Int?
+  user        User?    @relation("AuditPerformedBy", fields: [performedBy], references: [id])
+  details     Json     @default("{}")
+  ipAddress   String?
+
+  @@index([timestamp])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+/// Outbox of every message sent through NotificationService (in-app, e-mail, SMS, push)
+model Notification {
+  id        Int                 @id @default(autoincrement())
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   NotificationChannel
+  type      String
+  recipient String
+  subject   String
+  body      String
+  status    NotificationStatus  @default(SENT)
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+/// UML: SystemAdministrator.systemSettings() - editable system configuration
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
