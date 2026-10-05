@@ -6,10 +6,11 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "node --watch --env-file-if-exists=.env src/index.js",
     "start": "node --env-file-if-exists=.env src/index.js",
     "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
+    "db:deploy": "prisma migrate deploy && prisma generate",
     "db:seed": "node --env-file-if-exists=.env prisma/seed.js",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
