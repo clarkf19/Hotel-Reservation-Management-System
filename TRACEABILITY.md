@@ -14,7 +14,7 @@ This document traces the submitted documentation through to the working applicat
 - **WBS**: Exp 7
 
 **Status meanings:**
-- **TESTED**: covered by the automated suite (`server/tests`, 60 tests).
+- **TESTED**: covered by the automated suite (`server/tests`, 68 tests).
 - **IMPLEMENTED**: working in the application and checked by hand.
 
 Where the documents disagree, the reading that was chosen is recorded in [`docs/ASSUMPTIONS.md`](docs/ASSUMPTIONS.md) (D-1 … D-14).

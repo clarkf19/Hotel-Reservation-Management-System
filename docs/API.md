@@ -62,6 +62,10 @@ Stack traces are never returned.
 | POST | `/reservations` `{roomId, checkIn, checkOut, numGuests, specialRequests?, redeemPoints?, guestId? (staff)}` | `reservation.own` or `reservation.manage` | Create and lock the room (`PENDING_PAYMENT`) |
 | GET | `/reservations/:id` | owner or staff | Detail + timeline |
 | POST | `/reservations/:id/pay` `{method, details, payCurrency?}` | `payment.own` or `reservation.manage` | Pay → confirm (SD-1) |
+| GET | `/payments/razorpay/config` | signed in | Whether real Razorpay is enabled, mode, public key id, demo charge |
+| POST | `/reservations/:id/razorpay/order` | `payment.own` or `reservation.manage` | Lock the room + create a Razorpay Order |
+| POST | `/reservations/:id/razorpay/verify` `{orderId, paymentId, signature}` | same | Verify the signature and the payment with Razorpay → confirm |
+| POST | `/reservations/:id/razorpay/cancel` `{orderId?, reason?}` | same | Checkout closed → release the lock |
 | PATCH | `/reservations/:id` `{checkIn?, checkOut?, roomId?, numGuests?, payment?}` | `reservation.own` or `reservation.manage` | Modify. Returns `requiresPayment` when the price increases. |
 | GET | `/reservations/:id/cancellation-terms` | owner or staff | BR-8 preview |
 | POST | `/reservations/:id/cancel` `{confirm: true}` | `reservation.own` or `reservation.manage` | Cancel with fee / refund |

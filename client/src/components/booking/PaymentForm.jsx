@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { CreditCard, Smartphone, Landmark, Wallet, Lock, FlaskConical } from 'lucide-react';
+import { CreditCard, Smartphone, Landmark, Wallet, Lock, FlaskConical, BadgeIndianRupee } from 'lucide-react';
 import { Field, Input, Select } from '../ui/index.js';
 import { inr2 } from '../../lib/format.js';
 
@@ -25,20 +25,50 @@ export const TEST_CARDS = [
 
 const fmtCard = (v) => v.replace(/\D/g, '').slice(0, 19).replace(/(.{4})/g, '$1 ').trim();
 
-export function PaymentForm({ amount, onChange, showCurrency = true }) {
+export function PaymentForm({ amount, onChange, showCurrency = true, razorpay }) {
+  const [gateway, setGateway] = useState('MOCK');
   const [method, setMethod] = useState('CARD');
   const [d, setD] = useState({ cardNumber: '', expiry: '', cvv: '', cardholder: '', upiId: '', bank: 'HDFC Bank', wallet: 'Paytm' });
   const [payCurrency, setPayCurrency] = useState('INR');
 
   useEffect(() => {
+    if (gateway === 'RAZORPAY') { onChange({ method: 'RAZORPAY' }); return; }
     const details = method === 'CARD' ? { cardNumber: d.cardNumber, expiry: d.expiry, cvv: d.cvv, cardholder: d.cardholder } : method === 'UPI' ? { upiId: d.upiId } : method === 'NET_BANKING' ? { bank: d.bank } : { wallet: d.wallet };
     onChange({ method, details, payCurrency: payCurrency === 'INR' ? undefined : payCurrency });
-  }, [method, d, payCurrency, onChange]);
+  }, [gateway, method, d, payCurrency, onChange]);
 
   const set = (k, f = (x) => x) => (e) => setD({ ...d, [k]: f(e.target.value) });
 
+  const useRazorpay = razorpay?.enabled && gateway === 'RAZORPAY';
   return (
     <div className="space-y-4">
+      {razorpay?.enabled && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {[
+            ['RAZORPAY', BadgeIndianRupee, `Razorpay${razorpay.mode === 'live' ? '' : ' (test mode)'}`, razorpay.mode === 'live' ? 'Real payment via UPI, card or net banking' : 'Razorpay sandbox — no real money'],
+            ['MOCK', FlaskConical, 'Sandbox gateway', 'Built-in simulator with test cards'],
+          ].map(([key, Icon, label, sub]) => (
+            <button type="button" key={key} onClick={() => setGateway(key)} className={clsx('flex items-center gap-3 rounded-xl border p-3 text-left transition', gateway === key ? 'border-ink-900 bg-ink-900 text-white shadow' : 'border-ink-200 bg-white hover:border-ink-300')}>
+              <Icon className="size-6 shrink-0" />
+              <span><span className="block text-sm font-semibold">{label}</span><span className={clsx('block text-[12px]', gateway === key ? 'text-ink-300' : 'text-ink-500')}>{sub}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
+      {useRazorpay ? (
+        <div className="space-y-2 rounded-xl border border-ink-200 bg-ink-50/70 p-4 text-[13px] text-ink-700">
+          <p>You'll complete payment in Razorpay's secure window (UPI, cards, net banking, wallets). Your details go directly to Razorpay and never reach the hotel's system.</p>
+          {razorpay.demoChargeAmount ? (
+            <p className="rounded-lg bg-brass-50 px-3 py-2 text-ink-800">
+              <b>Demo charge:</b> Razorpay will charge only <b>{inr2(razorpay.demoChargeAmount)}</b>{razorpay.mode === 'live' ? ' (real money)' : ''}, not the full {inr2(amount)}. The booking is recorded at its full value and the payment is labelled as a demo charge.
+            </p>
+          ) : (
+            <p>Razorpay will charge the full <b>{inr2(amount)}</b>{razorpay.mode === 'live' ? ' (real money)' : ''}.</p>
+          )}
+          {razorpay.mode !== 'live' && <p className="text-[12px] text-ink-500">Test mode: use UPI ID <span className="font-mono">success@razorpay</span> or a Razorpay test card. No money moves.</p>}
+        </div>
+      ) : (
+      <>
       <div className="grid grid-cols-4 gap-2">
         {METHODS.map((m) => (
           <button type="button" key={m.value} onClick={() => setMethod(m.value)} className={clsx('flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-[12.5px] font-medium transition', method === m.value ? 'border-ink-900 bg-ink-900 text-white shadow' : 'border-ink-200 bg-white text-ink-600 hover:border-ink-300')}>
@@ -79,6 +109,8 @@ export function PaymentForm({ amount, onChange, showCurrency = true }) {
             {payCurrency !== 'INR' && <> ≈ <b className="tabular">{(amount / APPROX[payCurrency]).toFixed(2)} {payCurrency}</b> <span className="text-ink-400">(indicative; final rate applied by the gateway)</span></>}
           </span>
         </div>
+      )}
+      </>
       )}
       <p className="flex items-center gap-1.5 text-[12px] text-ink-500"><Lock className="size-3.5" />Processed by a PCI-DSS gateway. We never store your card number — only the brand and last four digits.</p>
     </div>

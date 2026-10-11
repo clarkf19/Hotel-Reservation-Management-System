@@ -77,6 +77,7 @@ export function reservationView(r) {
       paymentMethod: p.paymentMethod, methodSummary: p.methodSummary, transactionRef: p.transactionRef,
       paidAt: p.paidAt, failureReason: p.failureReason, refundedAmount: toNumber(p.refundedAmount),
       originalAmount: p.originalAmount ? toNumber(p.originalAmount) : null, originalCurrency: p.originalCurrency, createdAt: p.createdAt,
+      gateway: p.gateway, gatewayAmount: p.gatewayAmount == null ? null : toNumber(p.gatewayAmount),
     })),
     invoice: r.invoice ? { id: r.invoice.id, invoiceNumber: r.invoice.invoiceNumber, totalAmount: toNumber(r.invoice.totalAmount), issueDate: r.invoice.issueDate, status: r.invoice.status } : null,
     digitalKey: r.digitalKey ? { status: r.digitalKey.status, keyType: r.digitalKey.keyType, issueDate: r.digitalKey.issueDate, expiryDate: r.digitalKey.expiryDate } : null,
@@ -185,12 +186,24 @@ export async function createReservation(user, input) {
  */
 export async function payReservation(user, reservationId, { method, details, payCurrency }) {
   traceScenario('SD-1 Making Room Reservation');
+  const r = await lockForPayment(user, reservationId);
+  const actor = user.guestPk ? 'Guest' : 'Receptionist';
+  trace(actor, 'HRMS', 'Provide Payment Details', { ref: 'Activity', activity: 'Provide Payment Details', dfd: '3.1 Validate Payment Details' });
+
+  const result = await Payment.process({
+    reservationId: r.id, amount: toNumber(r.totalAmount), purpose: 'RESERVATION',
+    method, details, payCurrency, performedBy: user.id, ref: 'SD-1 msg 7-11',
+  });
+  if (!result.success) await failPayment(r, actor, result.reason, result.payment.id);
+  return confirmPaidReservation(r, user, result.payment);
+}
+
+/** Load a reservation awaiting payment; a recoverable DRAFT re-locks the room first ("Lock Room Inventory"). */
+async function lockForPayment(user, reservationId) {
   await releaseExpiredHolds();
   let r = await loadReservationFor(user, reservationId);
   if (user.guestPk && r.guestId !== user.guestPk) throw notFound('Reservation');
   if (!['PENDING_PAYMENT', 'DRAFT'].includes(r.status)) throw unprocessable('ALREADY_PROCESSED', `This reservation is already ${r.status.replace('_', ' ').toLowerCase()}.`);
-
-  // A recoverable draft (failed/expired payment) must re-lock the room before a new attempt.
   if (r.status === 'DRAFT') {
     const settings = await getSettings();
     trace('HRMS', 'Reservation', 'checkAvailability()', { ref: 'SD-1 msg 4', note: 'retry from draft' });
@@ -204,30 +217,30 @@ export async function payReservation(user, reservationId, { method, details, pay
     }
     trace('HRMS', 'Room', 'Lock Room Inventory', { ref: 'Activity', activity: 'Lock Room Inventory' });
   }
+  return r;
+}
 
-  const actor = user.guestPk ? 'Guest' : 'Receptionist';
-  trace(actor, 'HRMS', 'Provide Payment Details', { ref: 'Activity', activity: 'Provide Payment Details', dfd: '3.1 Validate Payment Details' });
-
-  const result = await Payment.process({
-    reservationId: r.id, amount: toNumber(r.totalAmount), purpose: 'RESERVATION',
-    method, details, payCurrency, performedBy: user.id, ref: 'SD-1 msg 7-11',
+/** <Payment Successful?> No -> Release Inventory Lock, notify the guest (CI-2), keep a recoverable DRAFT. Always throws. */
+async function failPayment(r, actor, reason, paymentId) {
+  trace('HRMS', 'Room', 'Release Inventory Lock', { ref: 'Activity', activity: 'Release Inventory Lock', branch: 'failure' });
+  await prisma.reservation.update({ where: { id: r.id }, data: { status: 'DRAFT', holdExpiresAt: null } });
+  trace('HRMS', 'NotificationService', 'sendPush(payment problem)', { ref: 'CI-2', branch: 'failure' });
+  await notificationService.notifyUser(r.guest.user.id, {
+    type: 'PAYMENT_FAILED', channels: ['IN_APP', 'PUSH', 'EMAIL'],
+    subject: 'Payment unsuccessful',
+    body: `We could not process your payment for room ${r.room.roomNumber} (${reason}). Your booking was saved as a draft — you can retry any time.`,
   });
+  trace('HRMS', actor, 'Payment failed — reservation not confirmed', { ref: 'UC-1 alt', kind: 'return', branch: 'failure' });
+  throw paymentFailed(reason, { reservationId: r.id, paymentId });
+}
 
-  if (!result.success) {
-    // Activity: Release Inventory Lock ; Fig.3 PAYMENT FAILED "guest may retry"
-    trace('HRMS', 'Room', 'Release Inventory Lock', { ref: 'Activity', activity: 'Release Inventory Lock', branch: 'failure' });
-    await prisma.reservation.update({ where: { id: r.id }, data: { status: 'DRAFT', holdExpiresAt: null } });
-    trace('HRMS', 'NotificationService', 'sendPush(payment problem)', { ref: 'CI-2', branch: 'failure' });
-    await notificationService.notifyUser(r.guest.user.id, {
-      type: 'PAYMENT_FAILED', channels: ['IN_APP', 'PUSH', 'EMAIL'],
-      subject: 'Payment unsuccessful',
-      body: `We could not process your payment for room ${r.room.roomNumber} (${result.reason}). Your booking was saved as a draft — you can retry any time.`,
-    });
-    trace('HRMS', actor, 'Payment failed — reservation not confirmed', { ref: 'UC-1 alt', kind: 'return', branch: 'failure' });
-    throw paymentFailed(result.reason, { reservationId: r.id, paymentId: result.payment.id });
-  }
+function paymentView(p) {
+  return { id: p.id, transactionRef: p.transactionRef, amount: toNumber(p.amount), methodSummary: p.methodSummary, gateway: p.gateway, gatewayAmount: p.gatewayAmount == null ? null : toNumber(p.gatewayAmount) };
+}
 
-  // BR-5 satisfied: payment verified -> confirm
+/** <Payment Successful?> Yes -> confirm() (BR-5) -> Room.updateStatus() -> FORK(...) -> JOIN -> "Reservation confirmed". */
+async function confirmPaidReservation(r, user, payment) {
+  const actor = user.guestPk ? 'Guest' : 'Receptionist';
   let confirmed;
   try {
     confirmed = await prisma.$transaction(async (tx) => {
@@ -236,7 +249,7 @@ export async function payReservation(user, reservationId, { method, details, pay
       if (r.pointsRedeemed > 0) {
         await LoyaltyAccount.redeemPoints(r.guestId, r.pointsRedeemed, { reservationId: r.id, description: `Redeemed on reservation ${formatReference(c.reservationNumber)}`, db: tx });
       }
-      await AuditLog.record({ action: 'RESERVATION_CONFIRMED', entityType: 'Reservation', entityId: r.id, performedBy: user.id, details: { reservationNumber: c.reservationNumber, amount: toNumber(r.totalAmount) } }, tx);
+      await AuditLog.record({ action: 'RESERVATION_CONFIRMED', entityType: 'Reservation', entityId: r.id, performedBy: user.id, details: { reservationNumber: c.reservationNumber, amount: toNumber(r.totalAmount), gateway: payment.gateway } }, tx);
       return c;
     });
   } catch (err) {
@@ -254,7 +267,62 @@ export async function payReservation(user, reservationId, { method, details, pay
 
   trace('HRMS', actor, 'Reservation confirmed', { ref: 'SD-1 msg 16', kind: 'return' });
   const full = await prisma.reservation.findUnique({ where: { id: r.id }, include: reservationInclude });
-  return { reservation: reservationView(full), payment: { id: result.payment.id, transactionRef: result.payment.transactionRef, amount: toNumber(result.payment.amount), methodSummary: result.payment.methodSummary } };
+  return { reservation: reservationView(full), payment: paymentView(payment) };
+}
+
+// ---- Real Razorpay payments (same SD-1 steps; the guest authorises in Razorpay Checkout) ----------
+
+/** Step A: lock the room and create a Razorpay Order (Payment.initiate()). */
+export async function startRazorpayPayment(user, reservationId) {
+  traceScenario('SD-1 Making Room Reservation (Razorpay)');
+  const r = await lockForPayment(user, reservationId);
+  const actor = user.guestPk ? 'Guest' : 'Receptionist';
+  trace(actor, 'HRMS', 'Provide Payment Details (Razorpay Checkout)', { ref: 'Activity', activity: 'Provide Payment Details', dfd: '3.1 Validate Payment Details' });
+  const started = await Payment.startRazorpay({ reservation: r, performedBy: user.id });
+  const fresh = await prisma.reservation.findUnique({ where: { id: r.id } });
+  return { ...started, reservationId: r.id, holdExpiresAt: fresh.holdExpiresAt, prefill: { name: r.guest.user.name, email: r.guest.user.email, contact: r.guest.user.phone || '' } };
+}
+
+/** Step B: Checkout succeeded — verify the signature and the payment with Razorpay, then confirm. */
+export async function completeRazorpayPayment(user, reservationId, { orderId, paymentId, signature }) {
+  traceScenario('SD-1 Making Room Reservation (Razorpay)');
+  const r = await loadReservationFor(user, reservationId);
+  if (user.guestPk && r.guestId !== user.guestPk) throw notFound('Reservation');
+  const actor = user.guestPk ? 'Guest' : 'Receptionist';
+  if (r.status === 'CONFIRMED') {
+    // idempotent: the same successful payment reported twice
+    const p = await prisma.payment.findUnique({ where: { gatewayOrderId: orderId } });
+    if (p?.status === 'CAPTURED' && p.reservationId === r.id) return { reservation: reservationView(r), payment: paymentView(p) };
+  }
+  if (!['PENDING_PAYMENT', 'DRAFT'].includes(r.status)) throw unprocessable('ALREADY_PROCESSED', `This reservation is already ${r.status.replace('_', ' ').toLowerCase()}.`);
+  const result = await Payment.completeRazorpay({ reservation: r, orderId, paymentId, signature, performedBy: user.id });
+  if (!result.success) await failPayment(r, actor, result.reason, result.payment?.id);
+  if (r.status === 'DRAFT') {
+    // The hold expired while the guest was paying. The money is real, so re-lock if the room is still free, otherwise refund.
+    try {
+      await prisma.reservation.update({ where: { id: r.id }, data: { status: 'PENDING_PAYMENT' } });
+    } catch (err) {
+      await Payment.refund(r.id, toNumber(r.totalAmount), { performedBy: user.id, reason: 'Automatic refund: room taken while paying' });
+      Reservation.assertNoOverlapError(err);
+    }
+    r.status = 'PENDING_PAYMENT';
+  }
+  return confirmPaidReservation(r, user, result.payment);
+}
+
+/** Checkout closed or the payment failed inside Razorpay: release the lock (same failure branch as SD-1). */
+export async function abandonRazorpayPayment(user, reservationId, { orderId, reason }) {
+  traceScenario('SD-1 Making Room Reservation (Razorpay)');
+  const r = await loadReservationFor(user, reservationId);
+  if (user.guestPk && r.guestId !== user.guestPk) throw notFound('Reservation');
+  const p = orderId ? await prisma.payment.findUnique({ where: { gatewayOrderId: orderId } }) : null;
+  if (p && p.reservationId === r.id && ['INITIATED', 'PROCESSING'].includes(p.status)) {
+    await prisma.payment.update({ where: { id: p.id }, data: { status: 'FAILED', failureReason: reason || 'Payment cancelled in Razorpay Checkout' } });
+    await AuditLog.record({ action: 'PAYMENT_FAILED', entityType: 'Payment', entityId: p.id, performedBy: user.id, details: { reservationId: r.id, gateway: 'RAZORPAY', reason } });
+  }
+  if (r.status !== 'PENDING_PAYMENT') return { released: false, status: r.status };
+  await failPayment(r, user.guestPk ? 'Guest' : 'Receptionist', reason || 'Payment cancelled in Razorpay Checkout', p?.id).catch(() => {});
+  return { released: true, status: 'DRAFT' };
 }
 
 /**

@@ -18,6 +18,7 @@ import { useViva } from '../../components/viva/VivaContext.jsx';
 import { api, qs } from '../../lib/api.js';
 import { useAuth } from '../../lib/auth.jsx';
 import { useCountdown } from '../../lib/hooks.js';
+import { openRazorpayCheckout } from '../../lib/razorpay.js';
 import { fmtDate, inr, inr2, nights as countNights, reference } from '../../lib/format.js';
 
 function Steps({ step }) {
@@ -83,11 +84,13 @@ export default function BookRoom() {
   const [payError, setPayError] = useState(null);
   const [confirmed, setConfirmed] = useState(null);
   const onPaymentChange = useCallback((p) => setPayment(p), []);
+  const [razorpay, setRazorpay] = useState(null);
 
   useEffect(() => {
     (async () => {
       try {
         setInfo(await api.get('/public/info'));
+        api.get('/payments/razorpay/config').then(setRazorpay).catch(() => setRazorpay(null));
         const resumeId = params.get('reservationId');
         if (resumeId) {
           const { reservation: r } = await api.get(`/reservations/${resumeId}`);
@@ -125,11 +128,35 @@ export default function BookRoom() {
     } finally { setPending(false); }
   };
 
+  /** Real Razorpay: create order (server) -> Checkout (browser) -> verify signature + payment (server) -> confirm. */
+  const payWithRazorpay = async () => {
+    const order = await api.post(`/reservations/${reservation.id}/razorpay/order`, {}, { label: 'Razorpay order' });
+    setReservation((r) => ({ ...r, status: 'PENDING_PAYMENT', holdExpiresAt: order.holdExpiresAt }));
+    let result;
+    try {
+      result = await openRazorpayCheckout({
+        keyId: order.keyId, orderId: order.orderId, amountPaise: order.amountPaise, prefill: order.prefill, reference: `Booking #${reservation.id}`,
+        description: `Room ${room.roomNumber} · ${order.demoCharge ? 'demo charge' : 'booking'}`,
+      });
+    } catch (e) {
+      if (e?.dismissed) {
+        await api.post(`/reservations/${reservation.id}/razorpay/cancel`, { orderId: order.orderId, reason: window.__hrmsLastRazorpayError || 'Payment window closed' }).catch(() => {});
+        setReservation((r) => ({ ...r, status: 'DRAFT', holdExpiresAt: null }));
+        setPayError({ message: window.__hrmsLastRazorpayError ? `Razorpay: ${window.__hrmsLastRazorpayError}` : 'You closed the Razorpay window before paying.' });
+        window.__hrmsLastRazorpayError = undefined;
+        return null;
+      }
+      throw e;
+    }
+    return api.post(`/reservations/${reservation.id}/razorpay/verify`, { orderId: result.razorpay_order_id, paymentId: result.razorpay_payment_id, signature: result.razorpay_signature }, { label: 'Razorpay verify & confirm' });
+  };
+
   const pay = async () => {
     setPending(true);
     setPayError(null);
     try {
-      const res = await api.post(`/reservations/${reservation.id}/pay`, payment, { label: 'Pay & confirm' });
+      const res = payment?.method === 'RAZORPAY' ? await payWithRazorpay() : await api.post(`/reservations/${reservation.id}/pay`, payment, { label: 'Pay & confirm' });
+      if (!res) return; // guest closed Razorpay Checkout
       setConfirmed(res);
       setReservation(res.reservation);
       setStep(2);
@@ -187,12 +214,12 @@ export default function BookRoom() {
               ) : (
                 <Alert tone="amber" icon={Timer} title="Your booking is saved as a draft">The temporary hold was released. We'll check the room is still free and lock it again when you pay.</Alert>
               )}
-              {payError && <Alert tone="red" icon={AlertTriangle} title="Payment unsuccessful — reservation not confirmed">{payError.message} The room lock was released; you can retry with another method.</Alert>}
+              {payError && <Alert tone="red" icon={AlertTriangle} title="Payment unsuccessful — reservation not confirmed">{payError.message} {payError.code === 'PAYMENT_FAILED' || !payError.code ? 'The room lock was released; you can retry with another method.' : 'Your room is still held — you can try another method.'}</Alert>}
               <Card>
                 <h3 className="mb-4 font-semibold">Payment details</h3>
-                <PaymentForm amount={reservation.totalAmount} onChange={onPaymentChange} />
+                <PaymentForm amount={reservation.totalAmount} onChange={onPaymentChange} razorpay={razorpay} />
               </Card>
-              <Button size="lg" variant="brass" onClick={pay} loading={pending} className="w-full sm:w-auto">Pay {inr2(reservation.totalAmount)} & confirm</Button>
+              <Button size="lg" variant="brass" onClick={pay} loading={pending} className="w-full sm:w-auto">{payment?.method === 'RAZORPAY' ? `Pay ${inr2(razorpay?.demoChargeAmount ?? reservation.totalAmount)} with Razorpay` : `Pay ${inr2(reservation.totalAmount)} & confirm`}</Button>
             </>
           )}
 

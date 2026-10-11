@@ -11,6 +11,7 @@ import * as rooms from '../modules/reservations/room.service.js';
 import * as reservations from '../modules/reservations/reservation.service.js';
 import * as access from '../modules/access/access.service.js';
 import { SUPPORTED_CURRENCIES } from '../integrations/CurrencyExchangeRateService.js';
+import { razorpayGateway } from '../integrations/RazorpayGateway.js';
 
 const r = Router();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD dates.');
@@ -71,6 +72,28 @@ r.get('/reservations/:id', async (req, res) => res.json({ reservation: await res
 /** SD-1 msgs 7-16: payment -> confirm -> fork(sync, notify) */
 r.post('/reservations/:id/pay', authorize('payment.own', 'reservation.manage'), validate(paymentSchema), async (req, res) => {
   res.json(await reservations.payReservation(req.user, id(req.params.id), req.body));
+});
+
+// ---- Real Razorpay gateway (optional; enabled when RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are set) ----
+r.get('/payments/razorpay/config', authenticate, (_req, res) => {
+  const paise = razorpayGateway.chargePaise();
+  res.json({ enabled: razorpayGateway.configured(), mode: razorpayGateway.configured() ? razorpayGateway.mode() : null, keyId: razorpayGateway.configured() ? razorpayGateway.keyId : null, demoChargeAmount: paise ? paise / 100 : null });
+});
+
+r.post('/reservations/:id/razorpay/order', authorize('payment.own', 'reservation.manage'), async (req, res) => {
+  res.json(await reservations.startRazorpayPayment(req.user, id(req.params.id)));
+});
+
+r.post('/reservations/:id/razorpay/verify', authorize('payment.own', 'reservation.manage'), validate(z.object({
+  orderId: z.string().regex(/^order_[A-Za-z0-9]+$/, 'Invalid Razorpay order id'),
+  paymentId: z.string().regex(/^pay_[A-Za-z0-9]+$/, 'Invalid Razorpay payment id'),
+  signature: z.string().regex(/^[a-f0-9]{64}$/, 'Invalid Razorpay signature'),
+})), async (req, res) => {
+  res.json(await reservations.completeRazorpayPayment(req.user, id(req.params.id), req.body));
+});
+
+r.post('/reservations/:id/razorpay/cancel', authorize('payment.own', 'reservation.manage'), validate(z.object({ orderId: z.string().max(60).optional(), reason: z.string().max(200).optional() })), async (req, res) => {
+  res.json(await reservations.abandonRazorpayPayment(req.user, id(req.params.id), req.body));
 });
 
 /** Reservation.Modify */

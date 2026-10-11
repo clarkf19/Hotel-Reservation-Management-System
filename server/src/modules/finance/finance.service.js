@@ -12,6 +12,7 @@ import { getSettings } from '../../lib/settings.js';
 import { AuditLog } from '../../domain/AuditLog.js';
 import { Invoice } from '../../domain/Invoice.js';
 import { paymentGateway } from '../../integrations/PaymentGateway.js';
+import { razorpayGateway } from '../../integrations/RazorpayGateway.js';
 import { formatReference } from '../reservations/reservation.service.js';
 
 function paymentView(p) {
@@ -21,6 +22,7 @@ function paymentView(p) {
     status: p.status, purpose: p.purpose, paymentMethod: p.paymentMethod, methodSummary: p.methodSummary, transactionRef: p.transactionRef,
     refundedAmount: toNumber(p.refundedAmount), failureReason: p.failureReason, paidAt: p.paidAt, createdAt: p.createdAt,
     verifiedBy: p.verifiedBy?.name ?? null, verifiedAt: p.verifiedAt, reconciled: p.reconciled, source: p.reservation?.source,
+    gateway: p.gateway, gatewayAmount: p.gatewayAmount == null ? null : toNumber(p.gatewayAmount),
   };
 }
 
@@ -52,6 +54,30 @@ export async function verifyPayment(user, paymentId, { note } = {}) {
 }
 
 /**
+ * Razorpay payments are reconciled against Razorpay's own API. When a demo token amount was charged,
+ * the gateway figures are compared in proportion to the booking value recorded in HRMS.
+ */
+async function reconcileRazorpay(p) {
+  const hrmsNet = round2(toNumber(p.amount) - toNumber(p.refundedAmount));
+  const base = { ...paymentView(p), hrmsNet };
+  if (!razorpayGateway.configured()) return { ...base, gatewayState: null, gatewayNet: null, reconStatus: 'MISMATCH', issue: 'Razorpay keys not configured, cannot verify this Razorpay payment' };
+  try {
+    const rp = await razorpayGateway.fetchPayment(p.transactionRef);
+    const charged = toNumber(p.gatewayAmount ?? p.amount);
+    const scale = charged > 0 ? toNumber(p.amount) / charged : 1;
+    const gatewayNet = round2(((rp.amount - (rp.amount_refunded || 0)) / 100) * scale);
+    let status = 'MATCHED';
+    let issue = `Razorpay ${rp.status}: ₹${(rp.amount / 100).toFixed(2)} charged${rp.amount_refunded ? `, ₹${(rp.amount_refunded / 100).toFixed(2)} refunded` : ''}${scale !== 1 ? ' (demo charge, scaled to booking value)' : ''}`;
+    if (!['captured', 'refunded'].includes(rp.status)) { status = 'MISMATCH'; issue = `Razorpay reports status "${rp.status}"`; }
+    else if (Math.abs(rp.amount / 100 - charged) > 0.009) { status = 'MISMATCH'; issue = `Razorpay charged ₹${(rp.amount / 100).toFixed(2)}, HRMS expected ₹${charged.toFixed(2)}`; }
+    else if (Math.abs(gatewayNet - hrmsNet) > Math.max(1, scale * 1.01)) { status = 'MISMATCH'; issue = `Refunds differ: gateway net ≈ ₹${gatewayNet.toFixed(2)} vs HRMS ₹${hrmsNet.toFixed(2)}`; }
+    return { ...base, gatewayState: `RAZORPAY_${rp.status.toUpperCase()}`, gatewayNet: status === 'MATCHED' ? hrmsNet : gatewayNet, reconStatus: status, issue: status === 'MATCHED' ? null : issue, note: issue };
+  } catch (err) {
+    return { ...base, gatewayState: null, gatewayNet: null, reconStatus: 'MISSING_AT_GATEWAY', issue: `Razorpay lookup failed: ${err.message}` };
+  }
+}
+
+/**
  * FinanceStaff.reconcileRevenue(): compare HRMS payment records (D4) with the payment
  * gateway's settlement report. OTA-collected payments are settled by the OTA and excluded.
  */
@@ -61,6 +87,11 @@ export async function reconcile(user, { apply = false } = {}) {
   const payments = await prisma.payment.findMany({ where: { transactionRef: { not: null }, NOT: { transactionRef: { startsWith: 'ota_' } } }, include: paymentInclude, orderBy: { createdAt: 'desc' } });
   const items = [];
   for (const p of payments) {
+    if (p.gateway === 'RAZORPAY') {
+      if (p.status === 'FAILED') continue;
+      items.push(await reconcileRazorpay(p));
+      continue;
+    }
     const tx = ledger.get(p.transactionRef);
     const hrmsNet = round2(toNumber(p.amount) - toNumber(p.refundedAmount));
     let status = 'MATCHED';

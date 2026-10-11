@@ -453,6 +453,12 @@ model Payment {
   paidAt           DateTime?
   transactionRef   String?        @unique
   methodSummary    String?
+  /// Which gateway processed it: MOCK (sandbox simulator) or RAZORPAY (real Razorpay account)
+  gateway          String         @default("MOCK")
+  /// Razorpay order id (order_xxx) for RAZORPAY payments
+  gatewayOrderId   String?        @unique
+  /// Amount actually charged by the gateway when it differs from `amount` (Razorpay demo token charge)
+  gatewayAmount    Decimal?       @db.Decimal(10, 2)
   failureReason    String?
   refundedAmount   Decimal        @default(0) @db.Decimal(10, 2)
   reconciled       Boolean        @default(false)
