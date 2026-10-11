@@ -64,7 +64,7 @@ Every one of the 27 classes and interfaces in the submitted class diagram has a 
 | UML interface | Implementation | Methods implemented | What it simulates |
 |---|---|---|---|
 | **AIConciergeService** (handleQuery) | `integrations/AIConciergeService.js`: `KnowledgeBaseConcierge`, `ClaudeConcierge` | `handleQuery(query)` | The knowledge-base NLP. Uses a real Claude model only when `ANTHROPIC_API_KEY` is set. |
-| **PaymentGateway** (authorize, capture, refund) | `integrations/PaymentGateway.js`: `MockPaymentGateway`; **real** `integrations/RazorpayGateway.js` (Orders, Checkout signature verification, fetch, capture, refund) | `authorize(amount)`, `capture(txnId)`, `refund(txnId)`, plus `validateDetails`, `getSettlementReport` | A sandbox PSP with a ledger file; test cards for approve, decline and timeout |
+| **PaymentGateway** (authorize, capture, refund) | `integrations/PaymentGateway.js`: `MockPaymentGateway`; `integrations/RazorpayGateway.js` (Razorpay **test mode only**: Orders, Checkout signature verification, fetch, capture, refund) | `authorize(amount)`, `capture(txnId)`, `refund(txnId)`, plus `validateDetails`, `getSettlementReport` | A sandbox PSP with a ledger file; test cards for approve, decline and timeout |
 | **CurrencyExchangeRateService** (getExchangeRate) | `integrations/CurrencyExchangeRateService.js` | `getExchangeRate(currency)`, cached ≤ 24 h | A rates provider |
 | **NotificationService** (sendEmail, sendSMS, sendPush) | `integrations/NotificationService.js` | `sendEmail`, `sendSMS`, `sendPush` (+ `sendInApp`) | Writes to the `notifications` outbox |
 | **SmartLockController** (unlock) | `integrations/SmartLockController.js`: `SimulatedSmartLockController` | `unlock(keyCode)` | A door lock with auto re-lock |

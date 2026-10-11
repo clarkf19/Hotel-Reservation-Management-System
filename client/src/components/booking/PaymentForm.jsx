@@ -45,7 +45,7 @@ export function PaymentForm({ amount, onChange, showCurrency = true, razorpay })
       {razorpay?.enabled && (
         <div className="grid gap-2 sm:grid-cols-2">
           {[
-            ['RAZORPAY', BadgeIndianRupee, `Razorpay${razorpay.mode === 'live' ? '' : ' (test mode)'}`, razorpay.mode === 'live' ? 'Real payment via UPI, card or net banking' : 'Razorpay sandbox — no real money'],
+            ['RAZORPAY', BadgeIndianRupee, 'Razorpay · TEST MODE', 'Real Razorpay checkout, sandbox money only'],
             ['MOCK', FlaskConical, 'Sandbox gateway', 'Built-in simulator with test cards'],
           ].map(([key, Icon, label, sub]) => (
             <button type="button" key={key} onClick={() => setGateway(key)} className={clsx('flex items-center gap-3 rounded-xl border p-3 text-left transition', gateway === key ? 'border-ink-900 bg-ink-900 text-white shadow' : 'border-ink-200 bg-white hover:border-ink-300')}>
@@ -56,16 +56,11 @@ export function PaymentForm({ amount, onChange, showCurrency = true, razorpay })
         </div>
       )}
       {useRazorpay ? (
-        <div className="space-y-2 rounded-xl border border-ink-200 bg-ink-50/70 p-4 text-[13px] text-ink-700">
-          <p>You'll complete payment in Razorpay's secure window (UPI, cards, net banking, wallets). Your details go directly to Razorpay and never reach the hotel's system.</p>
-          {razorpay.demoChargeAmount ? (
-            <p className="rounded-lg bg-brass-50 px-3 py-2 text-ink-800">
-              <b>Demo charge:</b> Razorpay will charge only <b>{inr2(razorpay.demoChargeAmount)}</b>{razorpay.mode === 'live' ? ' (real money)' : ''}, not the full {inr2(amount)}. The booking is recorded at its full value and the payment is labelled as a demo charge.
-            </p>
-          ) : (
-            <p>Razorpay will charge the full <b>{inr2(amount)}</b>{razorpay.mode === 'live' ? ' (real money)' : ''}.</p>
-          )}
-          {razorpay.mode !== 'live' && <p className="text-[12px] text-ink-500">Test mode: use UPI ID <span className="font-mono">success@razorpay</span> or a Razorpay test card. No money moves.</p>}
+        <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4 text-[13px] text-ink-700">
+          <p className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">Test mode · no real money</p>
+          <p>You'll pay in Razorpay's secure checkout window. This project uses Razorpay's <b>sandbox</b>: nothing is charged to any real card, UPI or bank account.</p>
+          <p>{razorpay.demoChargeAmount ? <>Razorpay will show a test charge of <b>{inr2(razorpay.demoChargeAmount)}</b>; the booking is recorded at its full value of {inr2(amount)}.</> : <>Razorpay will show a test charge of <b>{inr2(amount)}</b>.</>}</p>
+          <p className="text-[12px] text-ink-600">To pay in the test window, use UPI ID <span className="font-mono font-semibold">success@razorpay</span> (or <span className="font-mono">failure@razorpay</span> to see a failed payment), or a Razorpay test card such as <span className="font-mono">4111 1111 1111 1111</span> with any future expiry and CVV.</p>
         </div>
       ) : (
       <>

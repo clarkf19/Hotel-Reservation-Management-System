@@ -219,7 +219,7 @@ export default function BookRoom() {
                 <h3 className="mb-4 font-semibold">Payment details</h3>
                 <PaymentForm amount={reservation.totalAmount} onChange={onPaymentChange} razorpay={razorpay} />
               </Card>
-              <Button size="lg" variant="brass" onClick={pay} loading={pending} className="w-full sm:w-auto">{payment?.method === 'RAZORPAY' ? `Pay ${inr2(razorpay?.demoChargeAmount ?? reservation.totalAmount)} with Razorpay` : `Pay ${inr2(reservation.totalAmount)} & confirm`}</Button>
+              <Button size="lg" variant="brass" onClick={pay} loading={pending} className="w-full sm:w-auto">{payment?.method === 'RAZORPAY' ? 'Pay with Razorpay (test mode)' : `Pay ${inr2(reservation.totalAmount)} & confirm`}</Button>
             </>
           )}
 

@@ -77,7 +77,7 @@ r.post('/reservations/:id/pay', authorize('payment.own', 'reservation.manage'), 
 // ---- Real Razorpay gateway (optional; enabled when RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are set) ----
 r.get('/payments/razorpay/config', authenticate, (_req, res) => {
   const paise = razorpayGateway.chargePaise();
-  res.json({ enabled: razorpayGateway.configured(), mode: razorpayGateway.configured() ? razorpayGateway.mode() : null, keyId: razorpayGateway.configured() ? razorpayGateway.keyId : null, demoChargeAmount: paise ? paise / 100 : null });
+  res.json({ enabled: razorpayGateway.configured(), mode: razorpayGateway.configured() ? 'test' : null, keyId: razorpayGateway.configured() ? razorpayGateway.keyId : null, demoChargeAmount: paise ? paise / 100 : null, liveKeysRefused: razorpayGateway.liveKeysRefused() });
 });
 
 r.post('/reservations/:id/razorpay/order', authorize('payment.own', 'reservation.manage'), async (req, res) => {

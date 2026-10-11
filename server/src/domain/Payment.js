@@ -91,7 +91,9 @@ export class Payment {
    */
   static async startRazorpay({ reservation, performedBy }) {
     if (!razorpayGateway.configured()) {
-      throw unprocessable('RAZORPAY_NOT_CONFIGURED', 'Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to server/.env and restart the API.');
+      throw unprocessable('RAZORPAY_NOT_CONFIGURED', razorpayGateway.liveKeysRefused()
+        ? 'Live Razorpay keys are not allowed in this project (test mode only). Use rzp_test_ keys.'
+        : 'Razorpay is not configured. Add test keys (rzp_test_…) to server/.env and restart the API.');
     }
     const amount = round2(toNumber(reservation.totalAmount));
     const tokenPaise = razorpayGateway.chargePaise();
@@ -112,7 +114,7 @@ export class Payment {
       data: {
         reservationId: reservation.id, amount, currency: 'INR', paymentMethod: 'CARD', purpose: 'RESERVATION',
         status: 'PROCESSING', gateway: 'RAZORPAY', gatewayOrderId: order.id, gatewayAmount: amountPaise / 100,
-        methodSummary: `Razorpay ${razorpayGateway.mode() === 'live' ? 'LIVE' : 'TEST'}`,
+        methodSummary: 'Razorpay TEST',
       },
     });
     await AuditLog.record({ action: 'PAYMENT_INITIATED', entityType: 'Payment', entityId: payment.id, performedBy, details: { reservationId: reservation.id, gateway: 'RAZORPAY', orderId: order.id, charged: amountPaise / 100, bookingTotal: amount } });
@@ -155,7 +157,7 @@ export class Payment {
     } catch (err) {
       return fail(`Could not verify the payment with Razorpay: ${err.message}`);
     }
-    const mode = razorpayGateway.mode() === 'live' ? 'LIVE' : 'TEST';
+    const mode = 'TEST';
     const charged = toNumber(payment.gatewayAmount);
     const demo = Math.abs(charged - toNumber(payment.amount)) > 0.009;
     const updated = await prisma.payment.update({

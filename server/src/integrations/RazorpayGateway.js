@@ -1,16 +1,17 @@
 /**
- * Real payment gateway: Razorpay (realises the UML «interface» PaymentGateway against a live PSP).
+ * Razorpay payment gateway in TEST MODE ONLY (realises the UML «interface» PaymentGateway against
+ * Razorpay's sandbox). No real money can move: live keys are refused.
  *   authorize  -> the guest authorises the payment in Razorpay Checkout (browser), against an Order we create
  *   verify     -> HMAC-SHA256 signature check + fetch the payment from Razorpay's API
  *   capture    -> POST /payments/:id/capture (only if the account does not auto-capture)
  *   refund     -> POST /payments/:id/refund
  *
  * Configured with RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in server/.env.
- *   rzp_test_… keys  -> Razorpay TEST mode: no real money moves.
- *   rzp_live_… keys  -> LIVE mode: real money is collected into the Razorpay account that owns the keys.
- * RAZORPAY_CHARGE_PAISE (optional, e.g. 100 = ₹1): charge this token amount instead of the full booking
- * total. The HRMS still records the booking value; the payment row stores what Razorpay actually charged
- * in `gatewayAmount`, and the UI labels it as a demo charge.
+ *   rzp_test_… keys  -> enabled (Razorpay sandbox: test cards / success@razorpay, no real money)
+ *   rzp_live_… keys  -> REFUSED: the Razorpay option stays disabled and a warning is shown. This project
+ *                       is a demonstration and must never collect real payments.
+ * RAZORPAY_CHARGE_PAISE (optional, e.g. 100 = ₹1 of test money): charge this amount instead of the full
+ * booking total. The HRMS still records the booking value and labels the payment as a demo charge.
  *
  * The key secret never leaves the server. Card / UPI details are entered in Razorpay's own checkout,
  * so the HRMS never sees them at all (SE-4).
@@ -31,12 +32,18 @@ export class RazorpayGateway {
   get keyId() { return process.env.RAZORPAY_KEY_ID || ''; }
   get #secret() { return process.env.RAZORPAY_KEY_SECRET || ''; }
 
+  /** Enabled only with TEST keys. */
   configured() {
-    return /^rzp_(test|live)_/.test(this.keyId) && Boolean(this.#secret);
+    return this.keyId.startsWith('rzp_test_') && Boolean(this.#secret);
+  }
+
+  /** True when someone put LIVE keys in .env — they are deliberately ignored (no real money). */
+  liveKeysRefused() {
+    return this.keyId.startsWith('rzp_live_');
   }
 
   mode() {
-    return this.keyId.startsWith('rzp_live_') ? 'live' : 'test';
+    return 'test';
   }
 
   /** Token amount in paise to charge instead of the full total, or null to charge in full. */

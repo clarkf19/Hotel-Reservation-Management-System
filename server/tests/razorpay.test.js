@@ -64,7 +64,7 @@ describe('Razorpay gateway (real PSP integration, faked API)', () => {
   it('reports its configuration (test mode, ₹1 demo charge)', async () => {
     const guest = await login('guest@hrms.test');
     const res = await api().get('/api/payments/razorpay/config').set(guest.auth);
-    expect(res.body).toEqual({ enabled: true, mode: 'test', keyId: 'rzp_test_HRMSFAKEKEY', demoChargeAmount: 1 });
+    expect(res.body).toEqual({ enabled: true, mode: 'test', keyId: 'rzp_test_HRMSFAKEKEY', demoChargeAmount: 1, liveKeysRefused: false });
   });
 
   it('order → Checkout → verified signature → capture → reservation confirmed (₹1 charged, booking value recorded)', async () => {
@@ -146,6 +146,23 @@ describe('Razorpay gateway (real PSP integration, faked API)', () => {
     const rzp = res.body.items.filter((i) => i.gateway === 'RAZORPAY');
     expect(rzp.length).toBeGreaterThan(0);
     expect(rzp.every((i) => i.reconStatus === 'MATCHED')).toBe(true);
+  });
+
+  it('refuses LIVE keys: the app can never take real money', async () => {
+    const guest = await login('guest@hrms.test');
+    process.env.RAZORPAY_KEY_ID = 'rzp_live_SHOULDBEREFUSED';
+    try {
+      const cfg = await api().get('/api/payments/razorpay/config').set(guest.auth);
+      expect(cfg.body).toMatchObject({ enabled: false, keyId: null, liveKeysRefused: true });
+      const r = await newBooking(guest, 165);
+      const before = orders.size;
+      const res = await api().post(`/api/reservations/${r.id}/razorpay/order`).set(guest.auth);
+      expect(res.status).toBe(422);
+      expect(res.body.error.message).toMatch(/test mode only/);
+      expect(orders.size).toBe(before); // Razorpay was never called
+    } finally {
+      process.env.RAZORPAY_KEY_ID = 'rzp_test_HRMSFAKEKEY';
+    }
   });
 
   it('a guest cannot pay for someone else\'s reservation', async () => {

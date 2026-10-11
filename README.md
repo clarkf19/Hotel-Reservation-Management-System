@@ -86,35 +86,32 @@ The equivalent commands without the root scripts:
 | `PORT` / `CLIENT_ORIGIN` | `4000` / `http://localhost:5173` | Server port / CORS |
 | `ANTHROPIC_API_KEY` | empty | Optional LLM mode for the concierge |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Model used when a key is present |
-| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | empty | Optional **real** Razorpay payments (see below) |
-| `RAZORPAY_CHARGE_PAISE` | `100` | Razorpay charges only this token amount (100 = ₹1); remove it to charge the full booking amount |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | empty | Optional Razorpay checkout, **test keys only** (see below) |
+| `RAZORPAY_CHARGE_PAISE` | empty | Optional smaller test charge (100 = ₹1 of test money) |
 
 `.env` is git-ignored. Only `.env.example` is committed.
 
-## Real payments with Razorpay (optional)
+## Razorpay checkout — test mode only (optional)
 
-The built-in sandbox gateway always works. You can also connect your own Razorpay account; a **"Razorpay"** option then appears on the payment step.
+The built-in sandbox gateway always works and needs no account. You can also connect **Razorpay in test mode**. The guest then pays in Razorpay's real checkout window, but with sandbox money only. **This project never takes real payments: live keys (`rzp_live_…`) are refused by the app.**
 
-1. Sign in at https://dashboard.razorpay.com → **Account & Settings → API Keys** → generate a key.
-   - **Test mode** keys (`rzp_test_…`) work immediately, and no real money moves. In test checkout, use UPI ID `success@razorpay`.
-   - **Live mode** keys (`rzp_live_…`) need your account's KYC to be activated. Real money is collected into your Razorpay account and settled to your bank (usually in about 2 working days, minus Razorpay's fee).
-2. Paste the keys into `server/.env`:
+1. Create a free account at https://dashboard.razorpay.com, switch to **Test Mode**, then go to **Account & Settings → API Keys** → generate a key. No KYC is needed for test keys.
+2. Paste the test keys into `server/.env`:
    ```
    RAZORPAY_KEY_ID="rzp_test_xxxxxxxx"
    RAZORPAY_KEY_SECRET="xxxxxxxxxxxxxxxx"
-   RAZORPAY_CHARGE_PAISE=100
    ```
-3. Restart the API (`npm run api`).
+3. Restart the API (`npm run api`). It prints `[razorpay] Test mode enabled — no real money moves.`
+4. On the payment step, choose **Razorpay · TEST MODE**. In Razorpay's window, pay with UPI `success@razorpay` (or `failure@razorpay` to see a failure), or the test card `4111 1111 1111 1111` with any future expiry and CVV.
 
-What happens when a guest chooses Razorpay:
-- The server creates a Razorpay **Order**, and the guest pays in Razorpay's own window.
-- The server checks Razorpay's **signature** and then asks Razorpay's API that the payment really exists, is for the right amount and is captured. Only then is the reservation confirmed.
-- Card and UPI details go straight to Razorpay; the HRMS never sees them, and the key secret never leaves the server.
-- With `RAZORPAY_CHARGE_PAISE=100`, Razorpay charges **₹1**. The booking is still recorded at its full value, and the payment is labelled "₹1.00 demo charge".
-- Cancellations refund through Razorpay (the same share of what was charged, subject to Razorpay's ₹1 minimum refund).
-- Finance reconciliation checks Razorpay payments against Razorpay's records.
+How it works:
+- The server creates a Razorpay **Order**.
+- After checkout, the server verifies Razorpay's **signature** and asks Razorpay's API that the payment exists, has the right amount and is captured. Only then is the reservation confirmed.
+- The key secret never leaves the server, and card/UPI details never reach the HRMS.
+- Cancellations refund through Razorpay, and Finance reconciliation checks Razorpay payments against Razorpay's records.
+- Optional: `RAZORPAY_CHARGE_PAISE=100` shows a ₹1 test charge instead of the full booking amount.
 
-`server/.env` is git-ignored, so your keys are never pushed to GitHub.
+`server/.env` is git-ignored, so keys are never pushed to GitHub.
 
 ## Demo accounts
 
@@ -134,7 +131,7 @@ Password for all accounts: **`Hotel@2026`**. Full details, test cards and test I
 npm test
 ```
 
-This runs 68 API and domain tests against the separate `hrms_test` database, covering all 16 required areas. The table and a manual end-to-end demo checklist are in [tests/README.md](tests/README.md).
+This runs 69 API and domain tests against the separate `hrms_test` database, covering all 16 required areas. The table and a manual end-to-end demo checklist are in [tests/README.md](tests/README.md).
 
 ## Project structure
 
@@ -173,5 +170,5 @@ hotel-reservation-management-system/
 
 ## Honest limits
 
-- **Simulated external systems:** the default payment gateway (real Razorpay payments are available optionally, see above), OTA platforms, smart locks, e-mail/SMS/push and exchange rates are simulations behind the documented interfaces. No real money moves, no OTA is contacted, no physical lock is opened, and no message leaves the machine (the messages appear in the notification outbox).
+- **Simulated external systems:** the payment gateway (optional Razorpay runs in test mode only, so no real money ever moves), OTA platforms, smart locks, e-mail/SMS/push and exchange rates are simulations behind the documented interfaces. No real money moves, no OTA is contacted, no physical lock is opened, and no message leaves the machine (the messages appear in the notification outbox).
 - **Local development only:** it runs over HTTP; CI-4 (TLS) applies to a real deployment. The mobile apps (OE-2), offline mode (OE-4), a second language (OR-2, TBD-4 in the SRS) and the performance targets (PE-1 to PE-4) were not built or measured.

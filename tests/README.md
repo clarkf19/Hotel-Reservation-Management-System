@@ -33,9 +33,9 @@ Your development data is never touched. PostgreSQL must be running (`npm run db`
 | 15 | Checkout | `checkin.test.js` › 15 (service charges, declined then approved final payment, key revoked, invoice PDF, loyalty after check-out, none at booking) |
 | 16 | Authorization failures | `auth.test.js` › 16 (no token, guest calling admin/manager/finance URLs, other guest's reservation, receptionist role change, finance cannot cancel) |
 | + | Concierge, analytics, finance, domain unit tests | `services.test.js` |
-| + | Real Razorpay gateway (fake Razorpay API): order, signature, capture, forged signature, wrong amount, closed checkout, refund, reconciliation | `razorpay.test.js` |
+| + | Razorpay gateway, test mode only (fake Razorpay API): order, signature, capture, forged signature, wrong amount, closed checkout, refund, reconciliation, **live keys refused** | `razorpay.test.js` |
 
-The latest run: **6 files, 68 tests, all passing.**
+The latest run: **6 files, 69 tests, all passing.**
 
 ## Manual end-to-end checklist (viva demo)
 

@@ -62,7 +62,7 @@ Stack traces are never returned.
 | POST | `/reservations` `{roomId, checkIn, checkOut, numGuests, specialRequests?, redeemPoints?, guestId? (staff)}` | `reservation.own` or `reservation.manage` | Create and lock the room (`PENDING_PAYMENT`) |
 | GET | `/reservations/:id` | owner or staff | Detail + timeline |
 | POST | `/reservations/:id/pay` `{method, details, payCurrency?}` | `payment.own` or `reservation.manage` | Pay → confirm (SD-1) |
-| GET | `/payments/razorpay/config` | signed in | Whether real Razorpay is enabled, mode, public key id, demo charge |
+| GET | `/payments/razorpay/config` | signed in | Whether Razorpay (test mode only) is enabled, public key id, demo charge, `liveKeysRefused` |
 | POST | `/reservations/:id/razorpay/order` | `payment.own` or `reservation.manage` | Lock the room + create a Razorpay Order |
 | POST | `/reservations/:id/razorpay/verify` `{orderId, paymentId, signature}` | same | Verify the signature and the payment with Razorpay → confirm |
 | POST | `/reservations/:id/razorpay/cancel` `{orderId?, reason?}` | same | Checkout closed → release the lock |
