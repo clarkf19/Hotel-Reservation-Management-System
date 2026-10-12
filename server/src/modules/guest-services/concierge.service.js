@@ -66,12 +66,14 @@ function nextDate(day, month, today) {
   return d;
 }
 
+/** The stay the guest is in now (CHECKED_IN), otherwise their next confirmed one. */
 async function currentStay(guestPk) {
-  return prisma.reservation.findFirst({
-    where: { guestId: guestPk, status: { in: ['CHECKED_IN', 'CONFIRMED'] }, checkOutDate: { gte: hotelToday() } },
+  const query = (status) => prisma.reservation.findFirst({
+    where: { guestId: guestPk, status, checkOutDate: { gte: hotelToday() } },
     include: { room: { include: { roomType: true } } },
-    orderBy: [{ status: 'asc' }, { checkInDate: 'asc' }],
+    orderBy: { checkInDate: 'asc' },
   });
+  return (await query('CHECKED_IN')) || query('CONFIRMED');
 }
 
 /** Guest.chatWithAIConcierge() — one conversational turn; persisted as an AIConversation row. */
